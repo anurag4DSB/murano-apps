@@ -1,0 +1,8 @@
+Author: anurag.mittal@scality.com
+Description: "- Initial release + passwd auth patch"
+Format: Heat.HOT/1.0
+FullName: io.murano.apps.generated.CB_0_1
+Name: "Cosbench - R0.1"
+Tags:
+- Heat-generated
+Type: Application
