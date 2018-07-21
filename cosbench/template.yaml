@@ -1,0 +1,126 @@
+---
+heat_template_version: 2015-10-15
+
+description: 'a benchmark tool for cloud object storage service'
+
+parameters:
+  image:
+    type: string
+    description: ID or name of the image to use for the instances to be created.
+    constraints:
+      - custom_constraint: glance.image
+        description: Must identify an image known to Glance
+    default: "CentOS-7-x86_64-GenericCloud-1612 (CentOS7.3)"
+    #default: CentOS_Linux_release_7.2.1511.qcow2
+    #CentOS Linux release 7.2.1511
+    #ubuntu-14.04-cloudinit.qcow2
+
+  key_name:
+    type: string
+    description: Keypair to enable SSH access to the instances.
+    constraints:
+      - custom_constraint: nova.keypair
+        description: Must name a public key (pair) known to Nova
+    default: on-cloud
+
+  network:
+    type: string
+    description: Name or ID of network to create VMs on.
+    constraints:
+      - custom_constraint: neutron.network
+        description: Must be a network known to Neutron
+    default: tenantnetwork1
+#change git repo to something else
+  gitrepo:
+    type: string
+    description: Cosbench release version
+    default: https://github.com/intel-cloud/cosbench/releases/download/v0.4.2/0.4.2.zip
+#should change scality password?
+  scality_password:
+    type: string
+    label: "ROOT password"
+#    hidden: true
+    description: Root password
+    default: Set your root password
+
+
+resources: 
+
+  scal-security-group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: Permit-All
+      rules:
+        - { direction: ingress, ethertype: IPv4, remote_mode: remote_group_id }
+        - { direction: ingress, ethertype: IPv6, remote_mode: remote_group_id }
+        - { port_range_max: 65534, port_range_min: 1, protocol: tcp }
+        - { port_range_max: 65534, port_range_min: 1, protocol: udp }
+
+  cosbench_master_server_port:
+    type: OS::Neutron::Port
+    properties:
+      network_id: { get_param: network }
+      security_groups:
+        - { get_resource: scal-security-group }
+
+  cosbench_master:
+    type: OS::Nova::Server
+    depends_on:
+      - cosbench_master_server_port
+      - scal-security-group
+    properties:
+      name:
+        list_join:
+          - '-'
+          - [  { get_param: 'OS::stack_name' },cosbench, master]
+      flavor: m1.xlarge
+      image: { get_param: image }
+      key_name: { get_param: key_name }
+      user_data:
+        str_replace:
+          template:
+            {get_file: cosbench_master.sh}
+          params:
+            $GIT_REPO: {get_param: gitrepo}
+            $MY_STACK: { get_param: 'OS::stack_name' }
+            $SCALITY_PASSWORD: {get_param: scality_password}
+            $cosbench_master_ip: {get_attr: [cosbench_master_server_port, fixed_ips, 0, ip_address]}
+      networks:
+        - port: { get_resource: cosbench_master_server_port }
+#        - network: { get_param: network }
+
+#      security_groups:
+#        - default
+#        - open
+
+  cosbench_server:
+    type: OS::Heat::ResourceGroup
+    depends_on:
+      - cosbench_master
+    properties:
+      count: 5
+      resource_def:
+        type: cosbench_server.yaml
+        properties:
+          name:
+            list_join:
+              - '-'
+              - [{ get_param: 'OS::stack_name' },cosbench,server,'%index%' ]
+          flavor: m1.xlarge
+          image: { get_param: image }
+          key_name: { get_param: key_name }
+          network: { get_param: network }
+          security_group: { get_resource: scal-security-group }
+          cosbench_master_ip: {get_attr: [cosbench_master_server_port, fixed_ips, 0, ip_address]}
+          scality_password: {get_param: scality_password}
+
+          
+##
+## OUTPUT SECTION ##
+##
+
+outputs:
+  private_ip:
+    description: Private IP of Cosbench-master node
+    value:
+      get_attr: [cosbench_master_server_port, fixed_ips, 0, ip_address]
